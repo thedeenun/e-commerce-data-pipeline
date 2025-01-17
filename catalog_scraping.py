@@ -13,7 +13,7 @@ load_dotenv()
 BUCKET_NAME = os.getenv("BUCKET_NAME")
 AWS_ACCESS_KEY = os.getenv("AWS_ACCESS_KEY")
 AWS_SECRET_KEY = os.getenv("AWS_SECRET_KEY")
-SOURCE_URL = os.getenv("SOURCE_URL")
+KEY_SOURCE = os.getenv("KEY_SOURCE")
 
 ua = UserAgent()
 
@@ -57,7 +57,6 @@ async def fetch_url(client, url):
 async def main():
     async with httpx.AsyncClient(
         http2=True,
-        follow_redirects=True,
         headers={
             "User-Agent": f"{ua.random}",
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9",
@@ -68,7 +67,7 @@ async def main():
         return results
 
 
-def load_to_s3(df):
+def load_to_s3(local_object):
     s3 = boto3.resource("s3",
         endpoint_url="https://s3.ap-southeast-1.amazonaws.com",
         aws_access_key_id=AWS_ACCESS_KEY,
@@ -78,12 +77,11 @@ def load_to_s3(df):
     if s3.Bucket(BUCKET_NAME) not in s3.buckets.all():
         s3.create_bucket(Bucket=BUCKET_NAME, CreateBucketConfiguration={'LocationConstraint': 'ap-southeast-1'})
     
-    object_path = f'ebay/catalog/{keyword}/'
     timestamp = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
-    object_key = object_path+f"{keyword}-{timestamp}.csv"
+    object_key = KEY_SOURCE+f"{keyword}-{timestamp}.csv"
     try:
         s3.meta.client.upload_file(
-            local_path,
+            local_object,
             BUCKET_NAME,
             object_key
         )
@@ -96,7 +94,6 @@ if __name__ == "__main__":
     list_df = asyncio.run(main())
 
     df = pd.concat(list_df)
-    timestamp = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
-    local_path = f'data/{keyword}_raw.csv'
-    df.to_csv(local_path, index=False)
-    load_to_s3(df)
+    local_object = f'data/{keyword}_catalog_raw.csv'
+    df.to_csv(local_object, index=False)
+    load_to_s3(local_object)
