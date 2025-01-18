@@ -41,8 +41,10 @@ def extract_from_s3():
 
     return df
 
-async def fetch_url(client ,url):
+async def fetch_url(client ,val):
     try:
+        url = val['product_link']
+        category = val['product_category']
         response = await client.get(url)
         if response.status_code == 200:
             print(f'Fetch {url} succeeded')
@@ -66,6 +68,7 @@ async def fetch_url(client ,url):
                     'id' : product_id,
                     'url' : url,
                     'brand' : product_brand,
+                    'category' : category,
                     'quantity' : product_quantity,
                     'retail_price' : product_price,
                     'description' : product_desc,
@@ -78,10 +81,11 @@ async def fetch_url(client ,url):
 
                 return json.dumps(temp_dict, indent=4)
             except Exception as e:
-                print(f'Error while extracting {url}: {e}')
-
+                print(f'Error while extracting : {e}')
+                return None 
     except httpx.RequestError as e:
         print(f"An error occurred while requesting {url}: {e}")
+        pass
 
 async def main():
     async with httpx.AsyncClient(
@@ -92,11 +96,11 @@ async def main():
         },
     ) as client:
         df = extract_from_s3()
-        tasks = [fetch_url(client, url) for url in df['product_link']]
+        tasks = [fetch_url(client, val) for key, val in df.iterrows()]
         result = await asyncio.gather(*tasks)
         return result
 
-def load_to_s3(local_path):
+def load_to_s3(local_object):
     s3 = boto3.resource("s3",
         endpoint_url="https://s3.ap-southeast-1.amazonaws.com",
         aws_access_key_id=AWS_ACCESS_KEY,
@@ -106,8 +110,8 @@ def load_to_s3(local_path):
     if s3.Bucket(BUCKET_NAME) not in s3.buckets.all():
         s3.create_bucket(Bucket=BUCKET_NAME, CreateBucketConfiguration={'LocationConstraint': 'ap-southeast-1'})
     
-    timestamp = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
-    object_key = KEY_DEST+f"{keyword}-{timestamp}.json"
+    timestamp = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S')
+    object_key = KEY_DEST+f"{timestamp}.json"
     try:
         s3.meta.client.upload_file(
             local_object,
@@ -124,6 +128,5 @@ if __name__ == '__main__':
     local_object = f'data/{keyword}_raw.json'
     with open(local_object, 'w', encoding='utf-8') as f:
         json.dump(list_json, f, indent=4, ensure_ascii=False)
-
     load_to_s3(local_object)
 

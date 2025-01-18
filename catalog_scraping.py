@@ -19,7 +19,7 @@ ua = UserAgent()
 
 keyword = "smartwatch"
 page_start = 1
-page_stop = 101
+page_stop = 5
 
 urls = [
     f"https://www.ebay.com/sch/i.html?_nkw={keyword}&_sacat=0&_from=R40&_dmd=2&rt=nc&_ipg=240&_pgn={num}"
@@ -40,10 +40,12 @@ async def fetch_url(client, url):
             get_product_name = [Selector(cat).xpath('//div[2]/div[@class="s-item__title"]//text()').get() for cat in catalog]
             get_product_id = [re.findall("/itm/(\d+)", link)[0] for link in get_product_link]
 
+
             df = pd.DataFrame(
                 {
                     "product_id": get_product_id,
                     "product_name": get_product_name,
+                    "product_category": keyword,
                     "product_link": get_product_link,
                 }
             )
@@ -77,8 +79,8 @@ def load_to_s3(local_object):
     if s3.Bucket(BUCKET_NAME) not in s3.buckets.all():
         s3.create_bucket(Bucket=BUCKET_NAME, CreateBucketConfiguration={'LocationConstraint': 'ap-southeast-1'})
     
-    timestamp = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
-    object_key = KEY_SOURCE+f"{keyword}-{timestamp}.csv"
+    timestamp = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S')
+    object_key = KEY_SOURCE+f"{timestamp}.csv"
     try:
         s3.meta.client.upload_file(
             local_object,
