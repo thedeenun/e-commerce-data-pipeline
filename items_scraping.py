@@ -1,4 +1,7 @@
 from datetime import datetime
+import aiohttp
+import requests
+import time
 import re
 import httpx
 import pandas as pd
@@ -41,59 +44,65 @@ def extract_from_s3():
 
     return df
 
-async def fetch_url(client ,val):
+async def fetch_url(client, val):
     try:
         url = val['product_link']
         category = val['product_category']
+        id = val['product_id']
         response = await client.get(url)
         if response.status_code == 200:
-            print(f'Fetch {url} succeeded')
+            print(f'Fetch {id} succeeded')
             try:
                 selector = Selector(response.text)
                 product_title = selector.xpath('//*/h1/span/text()').get()
-                product_id = selector.xpath('//*/div[@data-testid="x-about-this-item"]/div/div[2]//div[@class="ux-chevron__body"]/div/div[4]/div/div[2]//span/text()').get()
-                product_brand = selector.xpath('//*/div[@data-testid="x-about-this-item"]/div/div[2]//div[@class="ux-chevron__body"]/div/div[5]/div/div[2]//span/text()').get()
-                product_quantity = selector.xpath('//*/div[@data-testid="x-about-this-item"]/div/div[2]//div[@class="ux-chevron__body"]/div/div[3]/div/div[2]//span/text()').get()
-                product_price = re.search(r'\d+(\.\d+)?', selector.xpath('//*/div[@data-testid="x-price-section"]//div[@class="x-price-primary"]/span/text()').get()).group()
-                product_desc = selector.xpath('//*/div[@data-testid="x-item-description"]/div/div[2]/div/div/div/div/div/span/text()').get()
-                seller = selector.xpath('//*/div[@data-testid="x-about-this-seller"]/div/div[2]/div/div/div/ul/li[2]/span/text()').get()
-                seller_id = json.loads(selector.xpath('//*/div[@data-testid="x-about-this-seller"]/div/div[2]/div/div[@class="ux-chevron"]/@data-vi-tracking').get())['operationId']
-                seller_rating = re.search(r'\d+(\.\d+)?%', selector.xpath('//*/div[@data-testid="x-about-this-seller"]/div/div[2]/div/div/div/ul/li[3]/span/text()').get()).group()
-                product_feedback = selector.xpath('//*/div[@class="fdbk-detail-list"]/div[@class="tabs"]/div[@class="tabs__content"]//ul/li//div[@class="fdbk-container__details__comment"]/span/text()').getall()
+                product_specifics = selector.xpath('//*/div[@class="tabs__content"]//div[@data-testid="x-about-this-item"]/div/div[2]//span/text()').getall()
+                product_price = selector.xpath('//*/div[@data-testid="x-price-section"]//div[@class="x-price-primary"]/span/text()').get()
+                product_desc = selector.xpath('//*/div[@class="x-item-description-child"]//text()').getall()
+                product_feedback = selector.xpath('//*/div[@class="fdbk-detail-list"]//ul/li//div[@class="fdbk-container__details__comment"]/span/text()').getall()
                 product_image = selector.xpath('//*/div[@data-testid="x-photos-min-view"]/div/div[4]/div/img/@ data-zoom-src').getall()
+
+                seller = selector.xpath('//*/div[@data-testid="x-store-information"]/div[@class="x-store-information__header"]/div/h2//text()').get()
+                try:
+                    seller_id = json.loads(selector.xpath('//*/div[@data-testid="x-store-information"]/div[@class="x-store-information__header"]/div/h2/a/@data-vi-tracking').get())['operationId']
+                except Exception:
+                    seller_id = None
+                seller_url = selector.xpath('//*/div[@data-testid="x-store-information"]/div[@class="x-store-information__header"]/a/@href').get()
+                seller_rating = selector.xpath('//*/div[@data-testid="x-store-information"]/div[@class="x-store-information__header"]/div/h4/span[1]/text()').get()
 
                 temp_dict = dict()
                 temp_dict = {
                     'title' : product_title,
-                    'id' : product_id,
-                    'url' : url,
-                    'brand' : product_brand,
+                    'item_id' : id,
+                    'item_url' : url,
+                    'item_specifics' : product_specifics,
                     'category' : category,
-                    'quantity' : product_quantity,
                     'retail_price' : product_price,
                     'description' : product_desc,
                     'feedback' : product_feedback,
                     'image' : product_image,
                     'seller' : seller,
                     'seller_id' : seller_id,
+                    'seller_url' : seller_url,
                     'seller_rating' : seller_rating
                 }
 
-                return json.dumps(temp_dict, indent=4)
+                return json.dumps(temp_dict)
             except Exception as e:
-                print(f'Error while extracting : {e}')
+                print(f'Error while extracting {id} : {e}')
                 return None 
-    except httpx.RequestError as e:
-        print(f"An error occurred while requesting {url}: {e}")
+        else:
+            print(f'Cannot fetch {id}')
+    except Exception as e:
+        print(f"An error occurred while requesting {id}: {e}")
         pass
 
 async def main():
     async with httpx.AsyncClient(
         http2=True,
-        headers={
-            "User-Agent": f"{ua.random}",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9",
-        },
+        # headers={
+        #     "User-Agent": f"{ua.random}",
+        #     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9",
+        # },
     ) as client:
         df = extract_from_s3()
         tasks = [fetch_url(client, val) for key, val in df.iterrows()]
@@ -123,10 +132,13 @@ def load_to_s3(local_object):
         print(f"Error uploading data to S3: {error}")
 
 if __name__ == '__main__':
+    start_time = time.time()
     list_json = asyncio.run(main())
 
     local_object = f'data/{keyword}_raw.json'
     with open(local_object, 'w', encoding='utf-8') as f:
         json.dump(list_json, f, indent=4, ensure_ascii=False)
+    
     load_to_s3(local_object)
+    print(f"Total time taken: {time.time() - start_time} seconds")
 
